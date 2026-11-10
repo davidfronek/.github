@@ -1,6 +1,6 @@
 {
-    "name": "Deploy na VPS (SSH + rsync)",
-    "description": "Build projektu a nasazení na VPS přes rsync/SSH s využitím organizačních secrets (SSH_HOST, SSH_USER, SSH_PRIVATE_KEY, SSH_PORT).",
+    "name": "Deploy na VPS (vps-dashboard-domains)",
+    "description": "Nasazení aplikace na VPS přes helper vps-dashboard-domains (domain-deploy) s organizačními secrets (SSH_HOST, SSH_USER, SSH_PRIVATE_KEY, SSH_PORT).",
     "categories": ["Deployment"],
     "filePatterns": ["package.json$"]
 }

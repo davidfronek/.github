@@ -22,7 +22,7 @@ param(
     [string]$Scope = "org",
     [string[]]$Repos = @(),
     [Parameter(Mandatory)] [string]$SshHost,
-    [Parameter(Mandatory)] [string]$SshUser,
+    [string]$SshUser = "root",
     [Parameter(Mandatory)] [string]$KeyPath,
     [string]$SshPort = "22",
     # Viditelnost org secrets: all | private | selected
@@ -65,5 +65,4 @@ else {
 }
 
 Write-Host ""
-Write-Host "Hotovo. Nezapomeňte pro každé repo nastavit proměnnou DEPLOY_PATH:"
-Write-Host "  gh variable set DEPLOY_PATH --repo $Org/<repo> --body `"/opt/<app>`""
+Write-Host "Hotovo. Nastavené secrets: SSH_HOST, SSH_USER, SSH_PORT, SSH_PRIVATE_KEY."

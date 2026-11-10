@@ -1,143 +1,102 @@
 # Organizační deploy šablona (davidfronek)
 
-Obsah tohoto repozitáře patří do speciálního repa **`davidfronek/.github`** v organizaci.
-GitHub z něj automaticky bere:
+Toto je speciální repo **`davidfronek/.github`**. GitHub z něj automaticky bere:
 
-- `workflow-templates/` – šablony workflow, které se nabídnou v každém repu organizace
+- `workflow-templates/` – šablony workflow nabízené v každém repu organizace
   (Actions → New workflow → sekce „By davidfronek“).
-- `.github/workflows/deploy-vps-reusable.yml` – sdílený (reusable) workflow,
-  který volají jednotlivá repa. Logika deploye je na jednom místě.
+- `.github/workflows/*.yml` – sdílené (reusable) workflow, které volají jednotlivá
+  repa přes `uses:`. Deploy logika je na jednom místě.
 
-## Struktura
+## Jak deploy funguje
 
-```
-.github/workflows/deploy-vps-reusable.yml   # sdílená deploy logika (build + rsync + post-deploy)
-workflow-templates/deploy-vps.yml           # šablona pro jednotlivá repa
-workflow-templates/deploy-vps.properties.json
-scripts/setup-org-secrets.ps1               # nastavení secrets přes gh CLI
-```
+Všechny aplikace běží na VPS (46.28.108.112) pod správou helperu
+**`/usr/local/sbin/vps-dashboard-domains`** (zdroj: repo `vps-dashboard`,
+`scripts/domain-admin.sh`):
 
-## 1. Vytvoření repa `.github` v organizaci
+- aplikace žijí v `/srv/apps/<doména>`
+- systemd služby se jmenují `vps-app-<doména-s-pomlčkami>`
+- `domain-deploy <doména> <git-url> <větev> <port> <force_https> <www_redirect> <automatic_ssl>`
+  naklonuje repo, buildne, nastaví nginx/SSL a restartuje službu
 
-```powershell
-cd H:\projects\org-github
-git init
-git add .
-git commit -m "Add VPS deploy template and reusable workflow"
-git branch -M main
-git remote add origin https://github.com/davidfronek/.github.git
-git push -u origin main
-```
+Reusable workflow [deploy-vps-reusable.yml](.github/workflows/deploy-vps-reusable.yml)
+se přes SSH (jako root) připojí na VPS, zavolá `domain-deploy` a ověří health check.
 
-(Repo `davidfronek/.github` nejdřív založte na GitHubu – doporučeně **public**,
-jinak je nutné povolit přístup k reusable workflow: Settings → Actions → General
-→ Access → „Accessible from repositories in the organization“.)
+## Organizační secrets
 
-## 2. Deploy SSH klíč
+Nastavené pro celou organizaci (Settings → Secrets and variables → Actions):
 
-Vygenerujte **samostatný** klíč jen pro deploy (ne váš osobní):
+| Secret | Hodnota |
+|---|---|
+| `SSH_HOST` | IP/doména VPS |
+| `SSH_USER` | `root` (helper vyžaduje root) |
+| `SSH_PORT` | `22` |
+| `SSH_PRIVATE_KEY` | privátní část deploy klíče `github-actions-deploy` |
 
-```powershell
-ssh-keygen -t ed25519 -f $HOME\.ssh\github_deploy -C "github-actions-deploy" -N '""'
-```
+Veřejná část klíče musí být v `/root/.ssh/authorized_keys` na VPS.
 
-Veřejný klíč přidejte na VPS uživateli, pod kterým se deployuje:
-
-```bash
-# na VPS
-cat >> ~/.ssh/authorized_keys   # vložit obsah github_deploy.pub
-```
-
-## 3. Nastavení secrets
-
-Nainstalujte GitHub CLI a přihlaste se:
-
-```powershell
-winget install GitHub.cli
-gh auth login
-```
-
-Organizační secrets (sdílené všemi repy):
-
-```powershell
-.\scripts\setup-org-secrets.ps1 -SshHost 1.2.3.4 -SshUser deploy -KeyPath $HOME\.ssh\github_deploy
-```
-
-Nastaví: `SSH_HOST`, `SSH_USER`, `SSH_PORT`, `SSH_PRIVATE_KEY`.
-
-> **Pozor:** Na GitHub **Free** plánu organizace fungují org secrets jen pro
-> **veřejná** repa. Pro privátní repa použijte per-repo režim:
+> **Pozor (GitHub Free):** org secrets fungují jen pro **veřejná** repa.
+> Privátním repům (např. `vps-dashboard`) je třeba stejné secrets nastavit
+> na úrovni repa – viz [scripts/setup-org-secrets.ps1](scripts/setup-org-secrets.ps1):
 >
 > ```powershell
-> .\scripts\setup-org-secrets.ps1 -Scope repos -Repos tankovani,life360 -SshHost 1.2.3.4 -SshUser deploy -KeyPath $HOME\.ssh\github_deploy
+> .\scripts\setup-org-secrets.ps1 -Scope repos -Repos vps-dashboard -SshHost <IP> -SshUser root -KeyPath $HOME\.ssh\github_deploy
 > ```
 
-## 4. Zapojení repozitáře
+## Zapojení repozitáře
 
-V každém repu, které se má deployovat:
-
-1. Nastavte repository variable s cílovou cestou:
-
-   ```powershell
-   gh variable set DEPLOY_PATH --repo davidfronek/tankovani --body "/opt/tankovani"
-   ```
-
-2. Přidejte workflow – buď přes Actions → New workflow → šablona
-   „Deploy na VPS (SSH + rsync)“, nebo ručně vytvořte
-   `.github/workflows/deploy.yml`:
-
-   ```yaml
-   name: Deploy
-
-   on:
-     push:
-       branches: [ main ]
-     workflow_dispatch:
-
-   jobs:
-     deploy:
-       uses: davidfronek/.github/.github/workflows/deploy-vps-reusable.yml@main
-       with:
-         deploy_path: ${{ vars.DEPLOY_PATH }}
-         build_command: "npm ci && npm run build"
-         dist_dir: "dist"
-         post_deploy_command: ""
-       secrets: inherit
-   ```
-
-### Parametry reusable workflow
-
-| Parametr | Výchozí | Popis |
-|---|---|---|
-| `deploy_path` | *(povinné)* | Cílový adresář na VPS |
-| `build_command` | `npm ci && npm run build` | Build příkaz; prázdný = bez buildu, nasadí se celé repo |
-| `dist_dir` | `dist` | Adresář s výstupem buildu, který se rsyncem nahraje |
-| `node_version` | `22` | Verze Node.js |
-| `post_deploy_command` | *(prázdné)* | Příkaz na VPS po nasazení, např. `sudo systemctl restart app` |
-
-### Příklady pro vaše projekty
+Vytvořte v repu `.github/workflows/deploy.yml`:
 
 ```yaml
-# tankovani – build klienta, restart služby
-with:
-  deploy_path: ${{ vars.DEPLOY_PATH }}       # /var/www/tankovani
-  build_command: "npm ci && npm --prefix client ci && npm --prefix client run build"
-  dist_dir: "client/dist"
-  post_deploy_command: "sudo systemctl restart tankovani"
+name: Deploy
 
-# nastenka-live – bez buildu, nasazení celého repa + restart
-with:
-  deploy_path: ${{ vars.DEPLOY_PATH }}       # /opt/nastenka-live
-  build_command: ""
-  post_deploy_command: "cd /opt/nastenka-live && npm ci --omit=dev && sudo systemctl restart nastenka"
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    uses: davidfronek/.github/.github/workflows/deploy-vps-reusable.yml@main
+    with:
+      domain: moje-app.onremote.cz   # /srv/apps/<doména>, služba vps-app-*
+      port: "3000"
+      health_path: /                 # např. /health
+    secrets: inherit
 ```
 
-## Bezpečnostní poznámky
+Volitelné vstupy: `branch` (default `main`), `force_https` (`"1"`),
+`www_redirect` (`"0"`), `automatic_ssl` (`"1"`).
 
-- Deploy klíč omezte na VPS jen na to, co deploy potřebuje
-  (ideálně vlastní uživatel `deploy` s právy jen do web rootu + `sudo` jen na restart konkrétní služby).
-- Pokud `post_deploy_command` používá `sudo`, povolte ho bez hesla jen pro daný příkaz v `/etc/sudoers.d/deploy`:
+### Aktuálně zapojená repa
 
-  ```
-  deploy ALL=(root) NOPASSWD: /usr/bin/systemctl restart tankovani
-  ```
+| Repo | Doména | Port | Health |
+|---|---|---|---|
+| `nastenka-live` | nastenka-live.onremote.cz | 3099 | `/health` |
+| `mojekytara` | mojekytara.onremote.cz | 3001 | `/` |
+
+`vps-dashboard` má vlastní workflow (instaluje helper, speciální kroky) a
+`tankovani` zatím používá starší deploy přes `deploy/deploy.sh`.
+
+## Alternativa: rsync deploy
+
+Pro statické weby mimo helper je k dispozici
+[deploy-rsync-reusable.yml](.github/workflows/deploy-rsync-reusable.yml):
+build v CI → rsync výstupu na VPS → volitelný příkaz po nasazení.
+Vyžaduje vstup `deploy_path` (cílový adresář na VPS).
+
+## Rotace deploy klíče
+
+```powershell
+# nový klíč
+ssh-keygen -t ed25519 -f $HOME\.ssh\github_deploy -C github-actions-deploy -N '' -q
+# veřejnou část na VPS
+type $HOME\.ssh\github_deploy.pub | ssh root@<IP> "cat >> /root/.ssh/authorized_keys"
+# privátní část do org secrets
+.\scripts\setup-org-secrets.ps1 -SshHost <IP> -SshUser root -KeyPath $HOME\.ssh\github_deploy
+```
+
+(Pozn.: v PowerShellu generujte klíč raději přes `cmd /c ssh-keygen ... -N ""`,
+jinak může dostat passphrase `""`.)

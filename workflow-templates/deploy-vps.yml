@@ -5,15 +5,17 @@ on:
     branches: [ $default-branch ]
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   deploy:
     uses: davidfronek/.github/.github/workflows/deploy-vps-reusable.yml@main
     with:
-      # Cílový adresář na VPS – nastavte jako repository variable (Settings -> Secrets and variables -> Actions -> Variables)
-      deploy_path: ${{ vars.DEPLOY_PATH }}
-      # Upravte podle projektu (monorepo: např. "npm ci && npm --prefix client ci && npm --prefix client run build")
-      build_command: "npm ci && npm run build"
-      dist_dir: "dist"
-      # Volitelné – např. restart služby: "sudo systemctl restart moje-app"
-      post_deploy_command: ""
+      # Doména aplikace na VPS – určuje /srv/apps/<doména> a službu vps-app-*
+      domain: moje-app.onremote.cz
+      # Port aplikace
+      port: "3000"
+      # Volitelné: health_path: /health, force_https: "1", www_redirect: "0", automatic_ssl: "1"
+      health_path: /
     secrets: inherit
