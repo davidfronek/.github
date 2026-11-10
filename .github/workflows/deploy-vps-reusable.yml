@@ -1,0 +1,98 @@
+name: Deploy to VPS (reusable)
+
+on:
+  workflow_call:
+    inputs:
+      deploy_path:
+        description: "Cílový adresář na VPS (např. /var/www/app)"
+        required: true
+        type: string
+      build_command:
+        description: "Příkaz pro build. Prázdný řetězec = bez buildu, nasadí se celý obsah repozitáře."
+        required: false
+        type: string
+        default: "npm ci && npm run build"
+      dist_dir:
+        description: "Adresář s výstupem buildu, který se nasadí (relativně ke kořeni repa)"
+        required: false
+        type: string
+        default: "dist"
+      node_version:
+        description: "Verze Node.js pro build"
+        required: false
+        type: string
+        default: "22"
+      post_deploy_command:
+        description: "Příkaz spuštěný na VPS po nasazení (např. sudo systemctl restart app)"
+        required: false
+        type: string
+        default: ""
+    secrets:
+      SSH_HOST:
+        required: true
+      SSH_USER:
+        required: true
+      SSH_PRIVATE_KEY:
+        required: true
+      SSH_PORT:
+        required: false
+
+concurrency:
+  group: deploy-${{ github.repository }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        if: inputs.build_command != ''
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node_version }}
+
+      - name: Build
+        if: inputs.build_command != ''
+        run: ${{ inputs.build_command }}
+
+      - name: Setup SSH
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_PORT: ${{ secrets.SSH_PORT }}
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          ssh-keyscan -p "${SSH_PORT:-22}" "$SSH_HOST" >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Deploy via rsync
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+          SSH_PORT: ${{ secrets.SSH_PORT }}
+          DEPLOY_PATH: ${{ inputs.deploy_path }}
+          BUILD_COMMAND: ${{ inputs.build_command }}
+          DIST_DIR: ${{ inputs.dist_dir }}
+        run: |
+          if [ -n "$BUILD_COMMAND" ]; then
+            SRC="${DIST_DIR%/}"
+          else
+            SRC="."
+          fi
+          rsync -az --delete --exclude '.git' \
+            -e "ssh -i ~/.ssh/id_deploy -p ${SSH_PORT:-22}" \
+            "$SRC/" "$SSH_USER@$SSH_HOST:$DEPLOY_PATH/"
+
+      - name: Post-deploy command
+        if: inputs.post_deploy_command != ''
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+          SSH_PORT: ${{ secrets.SSH_PORT }}
+          POST_CMD: ${{ inputs.post_deploy_command }}
+        run: |
+          ssh -i ~/.ssh/id_deploy -p "${SSH_PORT:-22}" "$SSH_USER@$SSH_HOST" "$POST_CMD"
