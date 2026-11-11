@@ -73,6 +73,7 @@ jobs:
           username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           port: ${{ secrets.SSH_PORT || '22' }}
+          command_timeout: 40m
           envs: DOMAIN,APP_PORT,BRANCH,FORCE_HTTPS,WWW_REDIRECT,AUTOMATIC_SSL,HEALTH_PATH,REPO_URL
           script: |
             set -Eeuo pipefail
